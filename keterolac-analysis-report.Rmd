@@ -1,0 +1,251 @@
+---
+title: "Keterolac Analysis"
+author: "Emily Hasson"
+date: "4/14/2022"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+
+	Toradol is a nonsteroidal anti-inflammatory drug used to treat moderate to severe pain on a short-term basis. It is typically administered by an intramuscular or intravenous injection following a surgery, but it can also be taken in capsule form. Toradol can cause some mild side effects such as nausea and stomach pain, dizziness, headaches, and swelling. It differs from morphine, which is an opiate pain medication that acts directly on the central nervous system to induce analgesia. Notably, morphine inhibits peristalsis of the intestines, the process which moves substances through the gut. It is suspected that use of Toradol could decrease patients’ morphine requirements and allow them to return to a normal diet more quickly. 
+	The goal of this analysis is to explore whether the use of Toradol decreases the probability of having a long stay (over 5 days) in the hospital, and whether Toradol is associated with a decreased chance of bad pain the day after surgery. The data contains information about morphine requirements and number of days until a normal diet is resumed, which may be related to length of stay or level of pain. Additionally, information about the patients’ ages, diagnoses, duration of surgeries, and any complications is included, which may have an effect on the result.  
+
+## The Data
+
+```{r, include=FALSE}
+raw_data <- read.csv("ketorolac.csv", header=TRUE, stringsAsFactors=FALSE)
+torodata <- raw_data
+torodata <- torodata[complete.cases(torodata), ]
+torodata
+```
+
+  The data contains 15 potentially relevant categories including information about the procedure, patient background, and hospital stay. After removing any incomplete entries, it contains information about 138 patients. I began analyzing the data by generating histograms for each variable in order to analyze their distributions and check for any potential outliers. I note some potential outliers, such as a few people with a stage value of 10 or 11 and 3 people who required more than 300 mg of morphine. I will consider removing these rows later if they have a significant leverage in them model.
+  
+```{r, echo=FALSE}
+par(mfrow= c (2,2))
+hist(torodata$duration, labels=TRUE, main="", xlab="Duration")
+hist(torodata$Diagnosis, labels=TRUE, main="", xlab="Diagnosis")
+hist(torodata$Stage, labels=TRUE, main="", xlab="Stage")
+hist(torodata$General.diet, labels=TRUE, main="", xlab="General Diet")
+hist(torodata$BadPain, main="", xlab="Bad Pain")
+hist(torodata$HYS, main="", xlab="HYS")
+hist(torodata$OV, labels=TRUE, main="", xlab="OV")
+hist(torodata$LNS, labels=TRUE, main="", xlab="LNS")
+hist(torodata$TOR, main="", xlab="TOR")
+hist(torodata$DOS.yr, main="", xlab="Year")
+hist(torodata$AddPro, main="", xlab="AddPro")
+hist(torodata$Age, main="", xlab="Age")
+hist(torodata$LongStay, main="", xlab="Long Stay")
+hist(torodata$Comps, labels=TRUE, main="", xlab="Complications")
+hist(torodata$Morphine, labels=TRUE, main="", xlab="Morphine")
+```
+  
+  Next, I generated a correlation matrix to check for multicollinearity, which could make the model difficult to interpret or cause overfitting issues. I observed that the response variable for a long stay is negatively correlated with year and Toradol, and positively correlated with days until general diet is resumed. Additionally, Toradol is positively correlated with year and negatively correlated with both general diet and (to a lesser extent) morphine. This leads me to suspect that year and general diet might be confounding factors because Toradol use increased by year, and because Toradol is believed to decrease the number of days before a normal diet is resumed due to a decreased need for morphine.
+  Additionally, I noted that hysterectomy was very highly correlated with both Diagnosis and Duration. As a result it may be appopriate to remove those two predictors because hysterectomy may be satisfactory in representing all of those features. The other response variable, bad pain, had only slight correlations with age, additional procedures, and morphine.
+  
+```{r, include=FALSE}
+cor(torodata, method = "pearson", use = "complete.obs")
+```
+
+## Method
+
+  I started by fitting a model for long stay using all predictors and the probit link function. Initially, Toradol is not a significant predictor for long stay. As suspected based on the correlations calculated earlier, year and general diet are the most significant predictors. A deviance-based goodness of fit test returs a p-value of almost 1, which is very high and suggests overfitting.
+  I remove hysterectomy first because it is highly correlated with severeal other predictors and may cause multicollinearity issues, and check its effect using a deviance-based goodness of fit test. I decided to remove the general diet variable because it is highly correlated with long stay and I suspect that it may be confounding the effect of Toradol, which is what we want to study. I used a deviance-based goodness of fit test once again to ensure the model is still appropriate. I also removed year for the same reasons, and following the same procedure. At this point, Toradol becomes a highly significant predictor in the model.
+  I continue with backwards elimination, removing AddPro, OV, LNS, Stage, Diagnosis, duration, and BadPain, until all predictors are significant at the 0.05 level. The final model after variable selection contains Age, Toradol, complications, and morphine.
+  I compared the probit link function with the logit and cloglog link functions using the deviance-based goodness of fit test, and found that the cloglog model was best. I also checked that the variance of the model was close to 1 to make sure there was not a problem with overdispersion.
+
+```{r, include=FALSE}
+probit.mod <- glm(LongStay ~ Age + TOR + Comps + Morphine, data = torodata, family = binomial(link = "probit"))
+summary(probit.mod)
+1 - pchisq(deviance(probit.mod), df.residual(probit.mod))
+
+logit.mod <- glm(LongStay ~ Age + TOR + Comps + Morphine, data = torodata, family = binomial)
+cloglog.mod <- glm(LongStay ~ Age + TOR + Comps + Morphine, data = torodata, family = binomial(link = "cloglog"))
+
+1 - pchisq(deviance(probit.mod), df.residual(probit.mod))
+1 - pchisq(deviance(logit.mod), df.residual(logit.mod))
+1 - pchisq(deviance(cloglog.mod), df.residual(cloglog.mod))
+
+var(rstandard(cloglog.mod, type="pearson"))
+
+longstay <- cloglog.mod
+```
+
+  I followed a similar procedure in building a model for predicting whether the patient experienced bad pain the day after surgery. I started the model with all predictors. This time, a couple predictors are significant, but none as significant as year and general diet were in the long stay model. Once again I remove hysterectomy, and I also remove year since it was a confounding factor before and the difference in painkillers might change the level of pain between different years. I also removed general diet and morphine since they are strongly correlated with both Toradol and may confound Toradol's effects.
+  I tested removing age and additional procedures since they are correlated with bad pain. Even after controlling for all these potential confounding factors, the effect of Toradol is not significant. Since Morphine, General.diet, age, and additional procedures do not appear to confound Toradol's effects, I added them back and proceeded with backwards elimination. The final model contains Age, Additional Procedures, Morphine, and Toradol, though Toradol is not a significant predictor.
+  Again, I compare the deviance-based goodness of fit tests of the model using the link functions logit, probit, and cloglog. Although the logit model has the highest score on the goodness of fit test, it is similar to the cloglog model's score, and the cloglog model's variance is closer to 1, so I select the cloglog link function for this model.
+
+```{r, include=FALSE}
+cloglog.mod <- glm(BadPain ~  Age + AddPro + Morphine + TOR , data = torodata, family = binomial(link = "cloglog"))
+summary(cloglog.mod)
+1 - pchisq(deviance(cloglog.mod), df.residual(cloglog.mod))
+
+logit.mod <- glm(BadPain ~  Age + AddPro + Morphine + TOR, data = torodata, family = binomial)
+probit.mod <- glm(BadPain ~  Age + AddPro + Morphine + TOR , data = torodata, family = binomial(link = "probit"))
+
+1 - pchisq(deviance(probit.mod), df.residual(probit.mod))
+1 - pchisq(deviance(logit.mod), df.residual(logit.mod))
+1 - pchisq(deviance(cloglog.mod), df.residual(cloglog.mod))
+
+var(rstandard(probit.mod, type="pearson"))
+var(rstandard(logit.mod, type="pearson"))
+var(rstandard(cloglog.mod, type="pearson"))
+
+badpain <- cloglog.mod
+```
+
+## Results
+
+  The model for long stay shows that when all factors are held at their median values, administering Toradol results in the probability of a long stay decreasing from 52.2% to 20.8%. Additionally, it shows that the probability increases from 20.8% to 63.9% when the patient experiences complications during surgery. The predicted values also show that the chance of having a long stay in the hospital increases slightly with age and more dramatically with the amount of morphine given.
+ 
+```{r, echo=FALSE}
+newdata <- data.frame(Age=c(median(torodata$Age), median(torodata$Age)), TOR=c(0, 1), Comps=c(median(torodata$Comps), median(torodata$Comps)), Morphine=c(median(torodata$Morphine), median(torodata$Morphine)))
+
+
+newdata$LongStay = predict(longstay, newdata, type="response")
+newdata
+```
+
+### Probability of a Long Stay Given Change in Predictors: 
+```{r, echo=FALSE}
+#par(mfrow= c (2, 2), mar=c(5,5,3,3))
+#par(mfrow=c(2,2))
+
+
+bp <- barplot(newdata$LongStay, ylim=c(0,1),
+   legend = c("Without Toradol","With Toradol"), beside=TRUE, col = c("lightblue", "mistyrose"))
+text(bp, 0, round(newdata$LongStay, 3),cex=1,pos=3) 
+
+newdata <- data.frame(Age=seq(min(torodata$Age), max(torodata$Age),len=50), TOR=median(torodata$TOR), Comps=median(torodata$Comps), Morphine=median(torodata$Morphine))
+
+
+newdata$LongStay = predict(longstay, newdata, type="response")
+#newdata[1,]
+#newdata[50,]
+
+plot(LongStay ~ Age, data=newdata, col="lightblue", ylim=c(0,1), ylab="")
+lines(LongStay ~ Age, newdata, lwd=2)
+
+
+newdata <- data.frame(Age=median(torodata$Age), TOR=median(torodata$TOR), Comps=c(0,1), Morphine=median(torodata$Morphine))
+
+
+newdata$LongStay = predict(longstay, newdata, type="response")
+#newdata
+
+bp <- barplot(newdata$LongStay, ylim=c(0,1), col = c("lightblue", "mistyrose"), legend = c("No Complications","Complications"), beside=TRUE)
+text(bp, 0, round(newdata$LongStay, 3),cex=1,pos=3) 
+
+
+newdata <- data.frame(Age=median(torodata$Age), TOR=median(torodata$TOR), Comps=median(torodata$Comps), Morphine=seq(min(torodata$Morphine), max(torodata$Morphine), len=50))
+
+
+newdata$LongStay = predict(longstay, newdata, type="response")
+#newdata[1,]
+#newdata[50,]
+
+plot(LongStay ~ Morphine, data=newdata, col="mistyrose", ylim=c(0,1), ylab="")
+lines(LongStay ~ Morphine, newdata, lwd=2)
+
+#mtext("Probability of Long Stay",                   # Add main title
+#      side = 3,
+#      line = -2,
+#      cex=1,
+ #     outer = TRUE)
+```
+
+From the model predicting bad pain, we can see that administering Toradol is associated with a slight increase of 2.7% in the chances of bad pain the day after surgery, which is not a significant change. On the other hand, we can see that morphine and complications during surgery are associated with a more significant increase in the probability of bad pain, while age seems to have a negative relationship with the chances of bad pain.
+
+```{r, echo=FALSE}
+newdata1 = data.frame(Age=median(torodata$Age), AddPro = median(torodata$AddPro), Morphine = median(torodata$Morphine), TOR=c(0,1))
+newdata1$BadPain = predict(badpain, newdata1, type="response")
+newdata1
+```
+
+### Probability of Bad Pain Given Change in Predictors:
+```{r, echo=FALSE}
+#par(mfrow= c (2, 2), mar=c(5,5,3,3))
+
+# BadPain ~  Age + AddPro + Morphine + TOR
+newdata = data.frame(Age=seq(min(torodata$Age), max(torodata$Age),len=50), AddPro = median(torodata$AddPro), Morphine = median(torodata$Morphine), TOR=median(torodata$TOR))
+newdata$BadPain = predict(badpain, newdata, type="response")
+plot(BadPain ~ Age, data=newdata, col="lightblue", ylim=c(0,1), ylab="")
+lines(BadPain ~ Age, newdata, lwd=2)
+
+newdata = data.frame(Age=median(torodata$Age), AddPro = c(0,1), Morphine = median(torodata$Morphine), TOR=median(torodata$TOR))
+newdata$BadPain = predict(badpain, newdata, type="response")
+bp <- barplot(newdata$BadPain, ylim=c(0,1),
+   legend = c("No Additional Procedures","Additional Procedures"), beside=TRUE, col = c("lightblue", "mistyrose"))
+text(bp, 0, round(newdata$BadPain, 3),cex=.75,pos=3) 
+
+newdata = data.frame(Age=median(torodata$Age), AddPro = median(torodata$AddPro), Morphine = seq(min(torodata$Morphine), max(torodata$Morphine),len=50), TOR=median(torodata$TOR))
+newdata$BadPain = predict(badpain, newdata, type="response")
+plot(BadPain ~ Morphine, data=newdata, col="mistyrose", ylim=c(0,1), ylab="")
+lines(BadPain ~ Morphine, newdata, lwd=2)
+
+newdata = data.frame(Age=median(torodata$Age), AddPro = median(torodata$AddPro), Morphine = median(torodata$Morphine), TOR=c(0,1))
+newdata$BadPain = predict(badpain, newdata, type="response")
+bp <- barplot(newdata$BadPain, ylim=c(0,1),
+   legend = c("No Toradol","Toradol"), beside=TRUE, col = c("lightblue", "mistyrose"))
+text(bp, 0, round(newdata$BadPain, 3),cex=.75,pos=3) 
+#newdata
+
+
+#mtext("Probability of Bad Pain",                   # Add main title
+#      side = 3,
+ #     line = -2,
+  #    cex=1,
+   #   outer = TRUE)
+```
+
+## Summary
+
+  In conclusion, the model seems to suggest that use of Toradol is associated with a decreased probability of a long stay, but not with a decreased probability of bad pain the day after surgery. A likely explanation for this is the fact that use of Toradol appears to reduce the amount of morphine required during the patient's stay. Since morphine reduces gut mobility, its use appears to cause the patient to take longer to return to a normal diet, therefore taking longer to leave the hospital. The model suggests that this is the benefit of using Toradol after a hysterectomy, as opposed to its ability to relieve pain, which does not seem to be superior to that of morphine.
+
+## Appendix
+  
+```{r}
+# Correlation matrix
+cor(torodata, method = "pearson", use = "complete.obs")
+
+
+# Long stay model
+probit.mod <- glm(LongStay ~ Age + TOR + Comps + Morphine, data = torodata, family = binomial(link = "probit"))
+summary(probit.mod)
+1 - pchisq(deviance(probit.mod), df.residual(probit.mod))
+
+logit.mod <- glm(LongStay ~ Age + TOR + Comps + Morphine, data = torodata, family = binomial)
+cloglog.mod <- glm(LongStay ~ Age + TOR + Comps + Morphine, data = torodata, family = binomial(link = "cloglog"))
+
+1 - pchisq(deviance(probit.mod), df.residual(probit.mod))
+1 - pchisq(deviance(logit.mod), df.residual(logit.mod))
+1 - pchisq(deviance(cloglog.mod), df.residual(cloglog.mod))
+
+var(rstandard(cloglog.mod, type="pearson"))
+
+longstay <- cloglog.mod
+
+
+# Bad Pain model
+cloglog.mod <- glm(BadPain ~  Age + AddPro + Morphine + TOR , data = torodata, family = binomial(link = "cloglog"))
+summary(cloglog.mod)
+1 - pchisq(deviance(cloglog.mod), df.residual(cloglog.mod))
+
+logit.mod <- glm(BadPain ~  Age + AddPro + Morphine + TOR, data = torodata, family = binomial)
+probit.mod <- glm(BadPain ~  Age + AddPro + Morphine + TOR , data = torodata, family = binomial(link = "probit"))
+
+1 - pchisq(deviance(probit.mod), df.residual(probit.mod))
+1 - pchisq(deviance(logit.mod), df.residual(logit.mod))
+1 - pchisq(deviance(cloglog.mod), df.residual(cloglog.mod))
+
+var(rstandard(probit.mod, type="pearson"))
+var(rstandard(logit.mod, type="pearson"))
+var(rstandard(cloglog.mod, type="pearson"))
+
+badpain <- cloglog.mod
+
+```
